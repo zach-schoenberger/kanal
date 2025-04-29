@@ -11,6 +11,9 @@ categories = ["concurrency", "data-structures", "asynchronous"]
 license = "MIT"
 readme = "README.md"
 
+[lib]
+bench = false
+
 [dependencies]
 cacheguard = "0.1"
 futures-core = { version = "0.3", optional = true }

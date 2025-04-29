@@ -3,9 +3,7 @@ mod utils;
 mod asyncs {
     use crate::utils::*;
     use futures_core::FusedStream;
-    use kanal::{
-        bounded_async, unbounded_async, AsyncReceiver, AsyncSender, ReceiveError, SendError,
-    };
+    use kanal::{bounded, unbounded, ReceiveError, Receiver, SendError, Sender};
     use std::{
         sync::{
             atomic::{AtomicUsize, Ordering},
@@ -14,10 +12,10 @@ mod asyncs {
         time::Duration,
     };
 
-    fn new<T>(cap: Option<usize>) -> (AsyncSender<T>, AsyncReceiver<T>) {
+    fn new<T>(cap: Option<usize>) -> (Sender<T>, Receiver<T>) {
         match cap {
-            None => unbounded_async(),
-            Some(cap) => bounded_async(cap),
+            None => unbounded(),
+            Some(cap) => bounded(cap),
         }
     }
 
@@ -30,7 +28,7 @@ mod asyncs {
                 $pre
                 let h = tokio::spawn(async move {
                     for _i in 0..MESSAGES / THREADS {
-                        tx.send($new).await.unwrap();
+                        tx.send_async($new).await.unwrap();
                     }
                 });
                 list.push(h);
@@ -40,7 +38,7 @@ mod asyncs {
                 let rx = rx.clone();
                 let h = tokio::spawn(async move {
                     for _i in 0..MESSAGES / THREADS {
-                        rx.recv().await.unwrap();
+                        rx.recv_async().await.unwrap();
                     }
                 });
                 list.push(h);
@@ -57,13 +55,13 @@ mod asyncs {
             let (tx, rx) = new(Some(0));
             tokio::spawn(async move {
                 for _ in 0..MESSAGES {
-                    tx.send($zero).await.unwrap();
-                    tx.send($ones).await.unwrap();
+                    tx.send_async($zero).await.unwrap();
+                    tx.send_async($ones).await.unwrap();
                 }
             });
             for _ in 0..MESSAGES {
-                assert_eq!(rx.recv().await.unwrap(), $zero);
-                assert_eq!(rx.recv().await.unwrap(), $ones);
+                assert_eq!(rx.recv_async().await.unwrap(), $zero);
+                assert_eq!(rx.recv_async().await.unwrap(), $ones);
             }
         };
     }
@@ -76,14 +74,14 @@ mod asyncs {
             let tx = tx.clone();
             let h = tokio::spawn(async move {
                 for _i in 0..MESSAGES / THREADS {
-                    tx.send(Box::new(1)).await.unwrap();
+                    tx.send_async(Box::new(1)).await.unwrap();
                 }
             });
             list.push(h);
         }
 
         for _ in 0..MESSAGES {
-            assert_eq!(rx.recv().await.unwrap(), Box::new(1));
+            assert_eq!(rx.recv_async().await.unwrap(), Box::new(1));
         }
 
         for h in list {
@@ -95,11 +93,11 @@ mod asyncs {
         let (tx, rx) = new(cap);
 
         for _i in 0..MESSAGES {
-            tx.send(Box::new(1)).await.unwrap();
+            tx.send_async(Box::new(1)).await.unwrap();
         }
 
         for _ in 0..MESSAGES {
-            assert_eq!(rx.recv().await.unwrap(), Box::new(1));
+            assert_eq!(rx.recv_async().await.unwrap(), Box::new(1));
         }
     }
 
@@ -108,12 +106,12 @@ mod asyncs {
 
         tokio::spawn(async move {
             for _i in 0..MESSAGES {
-                tx.send(Box::new(1)).await.unwrap();
+                tx.send_async(Box::new(1)).await.unwrap();
             }
         });
 
         for _ in 0..MESSAGES {
-            assert_eq!(rx.recv().await.unwrap(), Box::new(1));
+            assert_eq!(rx.recv_async().await.unwrap(), Box::new(1));
         }
     }
 
@@ -124,7 +122,7 @@ mod asyncs {
             let tx = tx.clone();
             let h = tokio::spawn(async move {
                 for _i in 0..MESSAGES / THREADS {
-                    tx.send(Box::new(1)).await.unwrap();
+                    tx.send_async(Box::new(1)).await.unwrap();
                 }
             });
             list.push(h);
@@ -134,7 +132,7 @@ mod asyncs {
             let rx = rx.clone();
             let h = tokio::spawn(async move {
                 for _i in 0..MESSAGES / THREADS {
-                    rx.recv().await.unwrap();
+                    rx.recv_async().await.unwrap();
                 }
             });
             list.push(h);
@@ -224,7 +222,7 @@ mod asyncs {
             let counter = counter.clone();
             let s = s.clone();
             let c = tokio::spawn(async move {
-                let _ = s.send(DropTester::new(counter, 1234)).await;
+                let _ = s.send_async(DropTester::new(counter, 1234)).await;
             });
             list.push(c);
         }
@@ -239,33 +237,36 @@ mod asyncs {
     #[tokio::test]
     async fn recv_from_half_closed_queue() {
         let (tx, rx) = new(Some(1));
-        tx.send(Box::new(1)).await.unwrap();
+        tx.send_async(Box::new(1)).await.unwrap();
         drop(tx);
         // it's ok to receive data from queue of half closed channel
-        assert_eq!(rx.recv().await.unwrap(), Box::new(1));
+        assert_eq!(rx.recv_async().await.unwrap(), Box::new(1));
     }
 
     #[tokio::test]
     async fn recv_from_half_closed_channel() {
         let (tx, rx) = new::<u64>(Some(1));
         drop(tx);
-        assert_eq!(rx.recv().await.err().unwrap(), ReceiveError::SendClosed);
+        assert_eq!(
+            rx.recv_async().await.err().unwrap(),
+            ReceiveError::SendClosed
+        );
     }
 
     #[tokio::test]
     async fn recv_from_closed_channel() {
         let (tx, rx) = new::<u64>(Some(1));
         tx.close().unwrap();
-        assert_eq!(rx.recv().await.err().unwrap(), ReceiveError::Closed);
+        assert_eq!(rx.recv_async().await.err().unwrap(), ReceiveError::Closed);
     }
 
     #[tokio::test]
     async fn recv_from_closed_channel_queue() {
         let (tx, rx) = new(Some(1));
-        tx.send(Box::new(1)).await.unwrap();
+        tx.send_async(Box::new(1)).await.unwrap();
         tx.close().unwrap();
         // it's not possible to read data from queue of fully closed channel
-        assert_eq!(rx.recv().await.err().unwrap(), ReceiveError::Closed);
+        assert_eq!(rx.recv_async().await.err().unwrap(), ReceiveError::Closed);
     }
 
     #[tokio::test]
@@ -273,8 +274,8 @@ mod asyncs {
         let (tx, rx) = new(Some(1));
         drop(rx);
         assert_eq!(
-            tx.send(Box::new(1)).await.err().unwrap(),
-            SendError::ReceiveClosed
+            tx.send_async(Box::new(1)).await.err().unwrap(),
+            SendError::ReceiveClosed(Box::new(1))
         );
     }
 
@@ -282,7 +283,10 @@ mod asyncs {
     async fn send_to_closed_channel() {
         let (tx, rx) = new(Some(1));
         rx.close().unwrap();
-        assert_eq!(tx.send(Box::new(1)).await.err().unwrap(), SendError::Closed);
+        assert_eq!(
+            tx.send_async(Box::new(1)).await.err().unwrap(),
+            SendError::Closed(Box::new(1))
+        );
     }
 
     // Drop tests
@@ -294,7 +298,7 @@ mod asyncs {
         for _ in 0..10 {
             let r = r.clone();
             let c = tokio::spawn(async move {
-                if r.recv().await.is_ok() {
+                if r.recv_async().await.is_ok() {
                     panic!("should not be ok");
                 }
             });
@@ -317,7 +321,7 @@ mod asyncs {
             let s = s.clone();
             let counter = counter.clone();
             let c = tokio::spawn(async move {
-                if s.send(DropTester::new(counter, 1234)).await.is_ok() {
+                if s.send_async(DropTester::new(counter, 1234)).await.is_ok() {
                     panic!("should not be ok");
                 }
             });
@@ -342,7 +346,7 @@ mod asyncs {
             let counter = counter.clone();
             let s = s.clone();
             let c = tokio::spawn(async move {
-                let _ = s.send(DropTester::new(counter, 1234)).await;
+                let _ = s.send_async(DropTester::new(counter, 1234)).await;
             });
             list.push(c);
         }
@@ -373,7 +377,7 @@ mod asyncs {
         let counter = Arc::new(AtomicUsize::new(0));
         for _ in 0..10 {
             let counter = counter.clone();
-            let _ = s.send(DropTester::new(counter, 1234)).await;
+            let _ = s.send_async(DropTester::new(counter, 1234)).await;
         }
         assert_eq!(counter.load(Ordering::SeqCst), 10_usize);
     }
@@ -385,7 +389,7 @@ mod asyncs {
         let counter = Arc::new(AtomicUsize::new(0));
         for _ in 0..10 {
             let counter = counter.clone();
-            let _ = s.send(DropTester::new(counter, 1234)).await;
+            let _ = s.send_async(DropTester::new(counter, 1234)).await;
         }
         assert_eq!(counter.load(Ordering::SeqCst), 10_usize);
     }
@@ -397,9 +401,9 @@ mod asyncs {
 
     #[tokio::test]
     async fn one_msg() {
-        let (s, r) = bounded_async::<u8>(1);
-        s.send(0).await.unwrap();
-        assert_eq!(r.recv().await.unwrap(), 0);
+        let (s, r) = bounded::<u8>(1);
+        s.send_async(0).await.unwrap();
+        assert_eq!(r.recv_async().await.unwrap(), 0);
     }
 
     #[tokio::test]
@@ -481,7 +485,7 @@ mod asyncs {
         let (s, r) = new(Some(0));
         tokio::spawn(async move {
             for i in 0..MESSAGES {
-                s.send(i).await.unwrap();
+                s.send_async(i).await.unwrap();
             }
         });
         let mut stream = r.stream();
@@ -496,13 +500,13 @@ mod asyncs {
     }
 
     async fn two_msg(size: usize) {
-        let (s, r) = bounded_async::<u8>(size);
+        let (s, r) = bounded::<u8>(size);
         tokio::spawn(async move {
-            s.send(0).await.unwrap();
-            s.send(1).await.unwrap();
+            s.send_async(0).await.unwrap();
+            s.send_async(1).await.unwrap();
         });
-        assert_eq!(r.recv().await.unwrap(), 0);
-        assert_eq!(r.recv().await.unwrap(), 1);
+        assert_eq!(r.recv_async().await.unwrap(), 0);
+        assert_eq!(r.recv_async().await.unwrap(), 1);
     }
 
     #[tokio::test]
@@ -514,12 +518,12 @@ mod asyncs {
 
         tokio::spawn(async move {
             for _i in 0..MESSAGES {
-                tx.send(Foo).await.unwrap();
+                tx.send_async(Foo).await.unwrap();
             }
         });
 
         for _ in 0..MESSAGES {
-            rx.recv().await.unwrap();
+            rx.recv_async().await.unwrap();
         }
     }
 }

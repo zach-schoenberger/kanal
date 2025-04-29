@@ -2,22 +2,30 @@
 use core::fmt;
 use core::fmt::Debug;
 /// Error type for channel send operations without timeout
-#[derive(Debug, PartialEq, Eq)]
-pub enum SendError {
+#[derive(PartialEq, Eq)]
+pub enum SendError<T> {
     /// Indicates that the channel is closed on both sides with
     /// call to `close()`
-    Closed,
+    Closed(T),
     /// Indicates that all receiver instances are dropped and the channel is
     /// closed from the receive side
-    ReceiveClosed,
+    ReceiveClosed(T),
 }
-impl core::error::Error for SendError {}
-impl fmt::Display for SendError {
+impl<T> core::error::Error for SendError<T> {}
+impl<T> fmt::Debug for SendError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Closed(_) => f.debug_tuple("Closed").finish(),
+            Self::ReceiveClosed(_) => f.debug_tuple("ReceiveClosed").finish(),
+        }
+    }
+}
+impl<T> fmt::Display for SendError<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(
             match *self {
-                SendError::Closed => "send to a closed channel",
-                SendError::ReceiveClosed => "send to a half closed channel",
+                SendError::Closed(_) => "send to a closed channel",
+                SendError::ReceiveClosed(_) => "send to a half closed channel",
             },
             f,
         )
@@ -25,25 +33,34 @@ impl fmt::Display for SendError {
 }
 
 /// Error type for channel send operations with timeout
-#[derive(Debug, PartialEq, Eq)]
-pub enum SendErrorTimeout {
+#[derive(PartialEq, Eq)]
+pub enum SendErrorTimeout<T> {
     /// Indicates that the channel is closed on both sides with a call to
     /// `close()`
-    Closed,
+    Closed(T),
     /// Indicates that all receiver instances are dropped and the channel is
     /// closed from the receive side
-    ReceiveClosed,
+    ReceiveClosed(T),
     /// Indicates that channel operation reached timeout and is canceled
-    Timeout,
+    Timeout(T),
 }
-impl core::error::Error for SendErrorTimeout {}
-impl fmt::Display for SendErrorTimeout {
+impl<T> core::error::Error for SendErrorTimeout<T> {}
+impl<T> fmt::Debug for SendErrorTimeout<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Closed(_) => f.debug_tuple("Closed").finish(),
+            Self::ReceiveClosed(_) => f.debug_tuple("ReceiveClosed").finish(),
+            Self::Timeout(_) => f.debug_tuple("Timeout").finish(),
+        }
+    }
+}
+impl<T> fmt::Display for SendErrorTimeout<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(
             match *self {
-                SendErrorTimeout::Closed => "send to a closed channel",
-                SendErrorTimeout::ReceiveClosed => "send to a half closed channel",
-                SendErrorTimeout::Timeout => "send timeout",
+                SendErrorTimeout::Closed(_) => "send to a closed channel",
+                SendErrorTimeout::ReceiveClosed(_) => "send to a half closed channel",
+                SendErrorTimeout::Timeout(_) => "send timeout",
             },
             f,
         )
