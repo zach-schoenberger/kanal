@@ -217,7 +217,6 @@ impl<T> Sender<T> {
     /// # println!("Hello {}!",name);
     /// # anyhow::Ok(())
     /// ```
-    #[inline(always)]
     pub fn send(&self, data: T) -> Result<(), SendError<T>> {
         let mut internal = self.internal.acquire_internal();
         if internal.recv_count == 0 {
@@ -270,7 +269,6 @@ impl<T> Sender<T> {
     /// # println!("Hello {}!",name);
     /// # anyhow::Ok(())
     /// ```
-    #[inline(always)]
     pub fn send_timeout(&self, data: T, duration: Duration) -> Result<(), SendErrorTimeout<T>> {
         let deadline = Instant::now().checked_add(duration).unwrap();
         let mut internal = self.internal.acquire_internal();
@@ -361,7 +359,6 @@ impl<T> Sender<T> {
     /// # t.join();
     /// # anyhow::Ok(())
     /// ```
-    #[inline(always)]
     pub fn try_send(&self, data: T) -> Result<bool, SendError<T>> {
         let mut internal = self.internal.acquire_internal();
         if internal.recv_count == 0 {
@@ -408,7 +405,6 @@ impl<T> Sender<T> {
     /// # t.join();
     /// # anyhow::Ok(())
     /// ```
-    #[inline(always)]
     pub fn try_send_realtime(&self, data: T) -> Result<bool, SendError<T>> {
         if let Some(mut internal) = self.internal.try_acquire_internal() {
             if internal.recv_count == 0 {
@@ -466,7 +462,6 @@ impl<T> fmt::Debug for Receiver<T> {
 
 impl<T> Receiver<T> {
     /// Receives data from the channel
-    #[inline(always)]
     pub fn recv(&self) -> Result<T, ReceiveError> {
         let mut internal = self.internal.acquire_internal();
         if internal.recv_count == 0 {
@@ -508,7 +503,6 @@ impl<T> Receiver<T> {
         // if the queue is not empty send the data
     }
     /// Tries receiving from the channel within a duration
-    #[inline(always)]
     pub fn recv_timeout(&self, duration: Duration) -> Result<T, ReceiveErrorTimeout> {
         let deadline = Instant::now().checked_add(duration).unwrap();
         let mut internal = self.internal.acquire_internal();
@@ -662,7 +656,6 @@ impl<T> Receiver<T> {
     /// # t.join();
     /// # anyhow::Ok(())
     /// ```
-    #[inline(always)]
     pub fn try_recv(&self) -> Result<Option<T>, ReceiveError> {
         let mut internal = self.internal.acquire_internal();
         if internal.recv_count == 0 {
@@ -711,7 +704,6 @@ impl<T> Receiver<T> {
     /// # t.join();
     /// # anyhow::Ok(())
     /// ```
-    #[inline(always)]
     pub fn try_recv_realtime(&self) -> Result<Option<T>, ReceiveError> {
         if let Some(mut internal) = self.internal.try_acquire_internal() {
             if internal.recv_count == 0 {
