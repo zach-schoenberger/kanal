@@ -1,32 +1,75 @@
-#[cfg(not(feature = "std-mutex"))]
-use crate::mutex::{Mutex, MutexGuard};
 use crate::signal::{Signal, SignalTerminator};
 extern crate alloc;
 use alloc::{collections::VecDeque, sync::Arc};
+
+#[cfg(not(feature = "std-mutex"))]
+use crate::mutex::{Mutex, MutexGuard};
 #[cfg(feature = "std-mutex")]
 use std::sync::{Mutex, MutexGuard};
 
-pub(crate) type Internal<T> = Arc<Mutex<ChannelInternal<T>>>;
-
-/// Acquire mutex guard on channel internal for use in channel operations
-#[inline(always)]
-pub(crate) fn acquire_internal<T>(internal: &'_ Internal<T>) -> MutexGuard<'_, ChannelInternal<T>> {
-    #[cfg(not(feature = "std-mutex"))]
-    return internal.lock();
-    #[cfg(feature = "std-mutex")]
-    internal.lock().unwrap_or_else(|err| err.into_inner())
+pub(crate) struct Internal<T> {
+    inner: Arc<Mutex<ChannelInternal<T>>>,
 }
 
-/// Tries to acquire mutex guard on channel internal for use in channel
-/// operations
-#[inline(always)]
-pub(crate) fn try_acquire_internal<T>(
-    internal: &'_ Internal<T>,
-) -> Option<MutexGuard<'_, ChannelInternal<T>>> {
-    #[cfg(not(feature = "std-mutex"))]
-    return internal.try_lock();
-    #[cfg(feature = "std-mutex")]
-    internal.try_lock().ok()
+impl<T> Internal<T> {
+    pub(crate) fn new(channel: ChannelInternal<T>) -> (Self, Self) {
+        let inner = Arc::new(Mutex::new(channel));
+        (
+            Self {
+                inner: inner.clone(),
+            },
+            Self { inner },
+        )
+    }
+
+    /// Acquire mutex guard on channel internal for use in channel operations
+    #[inline(always)]
+    pub(crate) fn acquire_internal(&self) -> MutexGuard<'_, ChannelInternal<T>> {
+        #[cfg(not(feature = "std-mutex"))]
+        return self.inner.lock();
+        #[cfg(feature = "std-mutex")]
+        self.inner.lock().unwrap_or_else(|err| err.into_inner())
+    }
+
+    /// Tries to acquire mutex guard on channel internal for use in channel
+    /// operations
+    #[inline(always)]
+    pub(crate) fn try_acquire_internal(&self) -> Option<MutexGuard<'_, ChannelInternal<T>>> {
+        #[cfg(not(feature = "std-mutex"))]
+        return self.inner.try_lock();
+        #[cfg(feature = "std-mutex")]
+        self.inner.try_lock().ok()
+    }
+
+    #[inline(always)]
+    pub(crate) fn clone_send(&self) -> Self {
+        let inner = self.inner.clone();
+        {
+            inner.lock().add_send();
+        }
+
+        Self { inner }
+    }
+
+    #[inline(always)]
+    pub(crate) fn clone_recv(&self) -> Self {
+        let inner = self.inner.clone();
+        {
+            inner.lock().add_recv();
+        }
+
+        Self { inner }
+    }
+
+    #[inline(always)]
+    pub(crate) fn drop_recv(&self) {
+        self.inner.lock().drop_recv();
+    }
+
+    #[inline(always)]
+    pub(crate) fn drop_send(&self) {
+        self.inner.lock().drop_send();
+    }
 }
 
 /// Internal of the channel that holds queues, waitlists, and general state of
@@ -55,8 +98,7 @@ unsafe impl<T: Send> Send for ChannelInternal<T> {}
 
 impl<T> ChannelInternal<T> {
     /// Returns a channel internal with the required capacity
-    #[inline(always)]
-    pub(crate) fn new(bounded: bool, capacity: usize) -> Internal<T> {
+    pub(crate) fn channel(bounded: bool, capacity: usize) -> (Internal<T>, Internal<T>) {
         let mut abstract_capacity = capacity;
         if !bounded {
             // act like there is no limit
@@ -72,11 +114,12 @@ impl<T> ChannelInternal<T> {
             capacity: abstract_capacity,
         };
 
-        Arc::new(Mutex::from(ret))
+        Internal::new(ret)
     }
 
     /// Terminates remainings signals in the queue to notify listeners about the
     /// closing of the channel
+    #[inline(always)]
     pub(crate) fn terminate_signals(&mut self) {
         for t in self.wait_list.iter() {
             // Safety: it's safe to terminate owned signal once
@@ -129,6 +172,7 @@ impl<T> ChannelInternal<T> {
 
     /// Tries to remove the send signal from the waitlist, returns true if the
     /// operation was successful
+    #[inline(always)]
     pub(crate) fn cancel_send_signal(&mut self, sig: &Signal<T>) -> bool {
         if !self.recv_blocking {
             for (i, send) in self.wait_list.iter().enumerate() {
@@ -143,6 +187,7 @@ impl<T> ChannelInternal<T> {
 
     /// Tries to remove the received signal from the waitlist, returns true if
     /// the operation was successful
+    #[inline(always)]
     pub(crate) fn cancel_recv_signal(&mut self, sig: &Signal<T>) -> bool {
         if self.recv_blocking {
             for (i, recv) in self.wait_list.iter().enumerate() {
@@ -157,6 +202,7 @@ impl<T> ChannelInternal<T> {
 
     /// checks if send signal exists in wait list
     #[cfg(feature = "async")]
+    #[inline(always)]
     pub(crate) fn send_signal_exists(&self, sig: &Signal<T>) -> bool {
         if !self.recv_blocking {
             for signal in self.wait_list.iter() {
@@ -170,6 +216,7 @@ impl<T> ChannelInternal<T> {
 
     /// checks if receive signal exists in wait list
     #[cfg(feature = "async")]
+    #[inline(always)]
     pub(crate) fn recv_signal_exists(&self, sig: &Signal<T>) -> bool {
         if self.recv_blocking {
             for signal in self.wait_list.iter() {
@@ -179,5 +226,39 @@ impl<T> ChannelInternal<T> {
             }
         }
         false
+    }
+
+    #[inline(always)]
+    pub(crate) fn drop_send(&mut self) {
+        if self.send_count > 0 {
+            self.send_count -= 1;
+            if self.send_count == 0 && self.recv_count != 0 {
+                self.terminate_signals();
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn drop_recv(&mut self) {
+        if self.recv_count > 0 {
+            self.recv_count -= 1;
+            if self.recv_count == 0 && self.send_count != 0 {
+                self.terminate_signals();
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn add_send(&mut self) {
+        if self.send_count > 0 {
+            self.send_count += 1;
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn add_recv(&mut self) {
+        if self.recv_count > 0 {
+            self.recv_count += 1;
+        }
     }
 }

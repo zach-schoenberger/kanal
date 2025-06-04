@@ -346,7 +346,7 @@ fn send_to_half_closed_channel() {
     drop(rx);
     assert_eq!(
         tx.send(Box::new(1)).err().unwrap(),
-        SendError::ReceiveClosed
+        SendError::ReceiveClosed(Box::new(1))
     );
 }
 
@@ -354,7 +354,10 @@ fn send_to_half_closed_channel() {
 fn send_to_closed_channel() {
     let (tx, rx) = new(Some(1));
     rx.close().unwrap();
-    assert_eq!(tx.send(Box::new(1)).err().unwrap(), SendError::Closed);
+    assert_eq!(
+        tx.send(Box::new(1)).err().unwrap(),
+        SendError::Closed(Box::new(1))
+    );
 }
 
 // Channel drop tests

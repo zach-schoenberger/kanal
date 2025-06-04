@@ -11,6 +11,9 @@ categories = ["concurrency", "data-structures", "asynchronous"]
 license = "MIT"
 readme = "README.md"
 
+[lib]
+bench = false
+
 [dependencies]
 cacheguard = "0.1"
 futures-core = { version = "0.3", optional = true }
@@ -18,7 +21,7 @@ lock_api = "0.4"
 
 [dev-dependencies]
 anyhow = "1.0"
-criterion = "0.4"
+criterion = { version = "0.4.0", features = ["html_reports"] }
 crossbeam = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "test-util", "macros"] }
 futures = "0.3"

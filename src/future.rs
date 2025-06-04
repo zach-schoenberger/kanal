@@ -1,8 +1,5 @@
 use crate::{
-    internal::{acquire_internal, Internal},
-    pointer::KanalPtr,
-    signal::Signal,
-    AsyncReceiver, ReceiveError, SendError,
+    internal::Internal, pointer::KanalPtr, signal::Signal, ReceiveError, Receiver, SendError,
 };
 use core::{
     fmt::Debug,
@@ -54,7 +51,10 @@ impl<T> Drop for SendFuture<'_, T> {
     fn drop(&mut self) {
         if !self.state.is_done() {
             if self.state.is_waiting()
-                && !acquire_internal(self.internal).cancel_send_signal(&self.sig)
+                && !self
+                    .internal
+                    .acquire_internal()
+                    .cancel_send_signal(&self.sig)
             {
                 // a receiver got signal ownership, should wait until the response
                 if self.sig.async_blocking_wait() {
@@ -120,7 +120,7 @@ impl<'a, T> SendFuture<'a, T> {
 }
 
 impl<T> Future for SendFuture<'_, T> {
-    type Output = Result<(), SendError>;
+    type Output = Result<(), SendError<T>>;
 
     #[inline(always)]
     fn poll(self: Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> Poll<Self::Output> {
@@ -128,23 +128,18 @@ impl<T> Future for SendFuture<'_, T> {
 
         match this.state {
             FutureState::Zero => {
-                let mut internal = acquire_internal(this.internal);
+                let mut internal = this.internal.acquire_internal();
                 if internal.recv_count == 0 {
                     let send_count = internal.send_count;
                     drop(internal);
                     this.state = FutureState::Done;
-                    if needs_drop::<T>() {
-                        // the data failed to move, drop it locally
-                        // Safety: the data is not moved, we are sure that it is inited in this
-                        // point, it's safe to init drop it.
-                        unsafe {
-                            this.drop_local_data();
-                        }
-                    }
+
+                    let data = unsafe { this.read_local_data() };
+
                     return Poll::Ready(Err(if send_count == 0 {
-                        SendError::Closed
+                        SendError::Closed(data)
                     } else {
-                        SendError::ReceiveClosed
+                        SendError::ReceiveClosed(data)
                     }));
                 }
                 if let Some(first) = internal.next_recv() {
@@ -180,21 +175,17 @@ impl<T> Future for SendFuture<'_, T> {
                     if success {
                         Poll::Ready(Ok(()))
                     } else {
-                        if needs_drop::<T>() {
-                            // the data failed to move, drop it locally
-                            // Safety: the data is not moved, we are sure that it is inited in
-                            // this point, it's safe to init drop it.
-                            unsafe {
-                                this.drop_local_data();
-                            }
-                        }
-                        Poll::Ready(Err(SendError::Closed))
+                        Poll::Ready(Err(SendError::Closed(unsafe { this.read_local_data() })))
                     }
                 }
                 Poll::Pending => {
                     if !this.sig.will_wake(cx.waker()) {
                         // Waker is changed and we need to update waker in the waiting list
-                        if acquire_internal(this.internal).send_signal_exists(&this.sig) {
+                        if this
+                            .internal
+                            .acquire_internal()
+                            .send_signal_exists(&this.sig)
+                        {
                             // signal is not shared with other thread yet so it's safe to
                             // update waker locally
                             // this.sig.register_waker(cx.waker());
@@ -209,16 +200,9 @@ impl<T> Future for SendFuture<'_, T> {
                             if this.sig.async_blocking_wait() {
                                 Poll::Ready(Ok(()))
                             } else {
-                                // the data failed to move, drop it locally
-                                // Safety: the data is not moved, we are sure that it is inited in
-                                // this point, it's safe to init
-                                // drop it.
-                                if needs_drop::<T>() {
-                                    unsafe {
-                                        this.drop_local_data();
-                                    }
-                                }
-                                Poll::Ready(Err(SendError::Closed))
+                                Poll::Ready(Err(SendError::Closed(unsafe {
+                                    this.read_local_data()
+                                })))
                             }
                         }
                     } else {
@@ -245,21 +229,7 @@ pub struct ReceiveFuture<'a, T> {
 
 impl<T> Drop for ReceiveFuture<'_, T> {
     fn drop(&mut self) {
-        if self.state.is_waiting() {
-            // try to cancel recv signal
-            if !acquire_internal(self.internal).cancel_recv_signal(&self.sig) {
-                // a sender got signal ownership, receiver should wait until the response
-                if self.sig.async_blocking_wait() {
-                    // got ownership of data that is not going to be used ever again, so drop it
-                    if needs_drop::<T>() {
-                        // Safety: data is not moved it's safe to drop it
-                        unsafe {
-                            self.drop_local_data();
-                        }
-                    }
-                }
-            }
-        }
+        self._take();
     }
 }
 
@@ -301,6 +271,40 @@ impl<'a, T> ReceiveFuture<'a, T> {
             _pinned: PhantomPinned,
         }
     }
+
+    /// useful for completing the future when used with `select` macros. if the future should be
+    /// cancelled, this should be called to make sure data is not lost, if you care about not
+    /// losing data.
+    pub fn take(mut self) -> Option<T> {
+        self._take()
+    }
+
+    fn _take(&mut self) -> Option<T> {
+        if self.state.is_waiting() {
+            // try to cancel recv signal
+            if !self
+                .internal
+                .acquire_internal()
+                .cancel_recv_signal(&self.sig)
+            {
+                // a sender got signal ownership, receiver should wait until the response
+                if self.sig.async_blocking_wait() {
+                    // got ownership of data that is not going to be used ever again, so drop it
+                    return Some(unsafe { self.read_local_data() });
+                }
+            } else {
+                // got ownership of data that is not going to be used ever again, so drop it
+                if needs_drop::<T>() {
+                    // Safety: data is not moved it's safe to drop it
+                    unsafe {
+                        self.drop_local_data();
+                    }
+                }
+            }
+        }
+
+        None
+    }
 }
 
 impl<T> Future for ReceiveFuture<'_, T> {
@@ -313,7 +317,7 @@ impl<T> Future for ReceiveFuture<'_, T> {
         loop {
             return match this.state {
                 FutureState::Zero => {
-                    let mut internal = acquire_internal(this.internal);
+                    let mut internal = this.internal.acquire_internal();
                     if internal.recv_count == 0 {
                         this.state = FutureState::Done;
                         return Poll::Ready(Err(ReceiveError::Closed));
@@ -362,7 +366,11 @@ impl<T> Future for ReceiveFuture<'_, T> {
                         if !this.sig.will_wake(cx.waker()) {
                             // the Waker is changed and we need to update waker in the waiting
                             // list
-                            if acquire_internal(this.internal).recv_signal_exists(&this.sig) {
+                            if this
+                                .internal
+                                .acquire_internal()
+                                .recv_signal_exists(&this.sig)
+                            {
                                 // signal is not shared with other thread yet so it's safe
                                 // to update waker locally
                                 this.sig.register_waker(cx.waker());
@@ -402,7 +410,7 @@ impl<T> Future for ReceiveFuture<'_, T> {
 pub struct ReceiveStream<'a, T: 'a> {
     future: Pin<Box<ReceiveFuture<'a, T>>>,
     terminated: bool,
-    receiver: &'a AsyncReceiver<T>,
+    receiver: &'a Receiver<T>,
 }
 
 impl<T> Debug for ReceiveStream<'_, T> {
@@ -442,8 +450,8 @@ impl<T> FusedStream for ReceiveStream<'_, T> {
 }
 
 impl<'a, T> ReceiveStream<'a, T> {
-    pub(crate) fn new_borrowed(receiver: &'a AsyncReceiver<T>) -> Self {
-        let mut future = receiver.recv();
+    pub(crate) fn new_borrowed(receiver: &'a Receiver<T>) -> Self {
+        let mut future = receiver.recv_async();
         future.is_stream = true;
         ReceiveStream {
             future: Box::pin(future),

@@ -36,7 +36,6 @@ pub struct Signal<T> {
 
 impl<T> Signal<T> {
     /// Signal to send data to a writer
-    #[inline(always)]
     #[cfg(feature = "async")]
     pub(crate) fn new_async() -> Self {
         Self {
@@ -59,7 +58,6 @@ impl<T> Signal<T> {
     }
 
     /// Signal to send data to a writer for specific kanal pointer
-    #[inline(always)]
     #[cfg(feature = "async")]
     pub(crate) fn new_async_ptr(ptr: KanalPtr<T>) -> Self {
         Self {
@@ -70,7 +68,6 @@ impl<T> Signal<T> {
     }
 
     /// Returns new sync signal for the provided thread
-    #[inline(always)]
     pub(crate) fn new_sync(ptr: KanalPtr<T>) -> Self {
         Self {
             state: AtomicU8::new(LOCKED),
@@ -114,7 +111,6 @@ impl<T> Signal<T> {
     }
 
     /// Waits for the signal event in sync mode,
-    #[inline(always)]
     pub(crate) fn wait(&self) -> bool {
         if let Some(res) = backoff::spin_option_yield_only(
             || {
@@ -250,6 +246,7 @@ impl<T> Signal<T> {
     /// Sends object to receive signal
     /// Safety: it's only safe to be called only once on the receive signals
     /// that are not terminated
+    #[inline(always)]
     pub(crate) unsafe fn send(this: *const Self, d: T) {
         (*this).ptr.write(d);
         Self::wake(this, UNLOCKED);
@@ -259,6 +256,7 @@ impl<T> Signal<T> {
     /// Safety: it's only safe to be called only once on the receive signals
     /// that are not terminated
     #[allow(unused)]
+    #[inline(always)]
     pub(crate) unsafe fn send_copy(this: *const Self, d: *const T) {
         (*this).ptr.copy(d);
         Self::wake(this, UNLOCKED);
@@ -267,6 +265,7 @@ impl<T> Signal<T> {
     /// Receives object from send signal
     /// Safety: it's only safe to be called only once on send signals that are
     /// not terminated
+    #[inline(always)]
     pub(crate) unsafe fn recv(this: *const Self) -> T {
         let r = (*this).ptr.read();
         Self::wake(this, UNLOCKED);
@@ -276,6 +275,7 @@ impl<T> Signal<T> {
     /// Terminates the signal and notifies its waiter
     /// Safety: it's only safe to be called only once on send/receive signals
     /// that are not finished or terminated
+    #[inline(always)]
     pub(crate) unsafe fn terminate(this: *const Self) {
         Self::wake(this, TERMINATED);
     }
@@ -284,11 +284,13 @@ impl<T> Signal<T> {
     /// Safety: it should only be used once, and only when data in ptr is valid
     /// and not moved.
     #[cfg(feature = "async")]
+    #[inline(always)]
     pub(crate) unsafe fn load_and_drop(&self) {
         _ = self.ptr.read();
     }
 
     /// Returns signal terminator for other side of channel
+    #[inline(always)]
     pub(crate) fn get_terminator(&self) -> SignalTerminator<T> {
         (self as *const Signal<T>).into()
     }
@@ -303,16 +305,20 @@ impl<T> From<*const Signal<T>> for SignalTerminator<T> {
 }
 
 impl<T> SignalTerminator<T> {
+    #[inline(always)]
     pub(crate) unsafe fn send(self, data: T) {
         Signal::send(self.0, data)
     }
     #[allow(unused)]
+    #[inline(always)]
     pub(crate) unsafe fn send_copy(self, data: *const T) {
         Signal::send_copy(self.0, data)
     }
+    #[inline(always)]
     pub(crate) unsafe fn recv(self) -> T {
         Signal::recv(self.0)
     }
+    #[inline(always)]
     pub(crate) unsafe fn terminate(&self) {
         Signal::terminate(self.0)
     }
