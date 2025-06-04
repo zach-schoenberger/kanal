@@ -289,6 +289,36 @@ impl<'a, T> ReceiveFuture<'a, T> {
             _pinned: PhantomPinned,
         }
     }
+
+    /// useful for completing the future when used with `select` macros. if the future should be
+    /// cancelled, this should be called to make sure data is not lost, if you care about not
+    /// losing data.
+    pub fn take(mut self) -> Option<T> {
+        if self.state.is_waiting() {
+            // try to cancel recv signal
+            if !self
+                .internal
+                .acquire_internal()
+                .cancel_recv_signal(&self.sig)
+            {
+                // a sender got signal ownership, receiver should wait until the response
+                if self.sig.async_blocking_wait() {
+                    // got ownership of data that is not going to be used ever again, so drop it
+                    return Some(unsafe { self.read_local_data() });
+                }
+            } else {
+                // got ownership of data that is not going to be used ever again, so drop it
+                if needs_drop::<T>() {
+                    // Safety: data is not moved it's safe to drop it
+                    unsafe {
+                        self.drop_local_data();
+                    }
+                }
+            }
+        }
+
+        None
+    }
 }
 
 impl<T> Future for ReceiveFuture<'_, T> {

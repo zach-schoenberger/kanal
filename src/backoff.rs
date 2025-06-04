@@ -237,13 +237,7 @@ pub(crate) fn spin_option_yield_only<T>(
 ) -> Option<T> {
     // exit early if predicate is already satisfied
     return_if_some!(predicate());
-    let timeout = if let Some(timeout) =
-        std::time::Instant::now().checked_add(Duration::from_micros(spin_micros))
-    {
-        timeout
-    } else {
-        return None;
-    };
+    let timeout = std::time::Instant::now().checked_add(Duration::from_micros(spin_micros))?;
 
     loop {
         for _ in 0..32 {

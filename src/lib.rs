@@ -841,7 +841,7 @@ impl<T> Receiver<T> {
     /// ```
     pub fn is_terminated(&self) -> bool {
         let internal = self.internal.acquire_internal();
-        internal.send_count == 0 && internal.queue.len() == 0
+        internal.send_count == 0 && internal.queue.is_empty()
     }
 
     shared_impl!();
