@@ -52,7 +52,9 @@ macro_rules! run_bench {
 fn mpmc(c: &mut Criterion) {
     let mut g = c.benchmark_group("async::mpmc");
     g.throughput(Throughput::Elements(BENCH_MSG_COUNT as u64));
-    g.sample_size(10).warm_up_time(Duration::from_secs(1));
+    g.sample_size(10)
+        .warm_up_time(Duration::from_secs(1))
+        .measurement_time(Duration::from_secs(10));
     let core_count = usize::from(available_parallelism().unwrap());
 
     g.bench_function("b0", |b| {

@@ -41,6 +41,7 @@ impl<T> Internal<T> {
         self.inner.try_lock().ok()
     }
 
+    #[inline(always)]
     pub(crate) fn clone_send(&self) -> Self {
         let inner = self.inner.clone();
         {
@@ -50,6 +51,7 @@ impl<T> Internal<T> {
         Self { inner }
     }
 
+    #[inline(always)]
     pub(crate) fn clone_recv(&self) -> Self {
         let inner = self.inner.clone();
         {
@@ -59,10 +61,12 @@ impl<T> Internal<T> {
         Self { inner }
     }
 
+    #[inline(always)]
     pub(crate) fn drop_recv(&self) {
         self.inner.lock().drop_recv();
     }
 
+    #[inline(always)]
     pub(crate) fn drop_send(&self) {
         self.inner.lock().drop_send();
     }
@@ -94,7 +98,6 @@ unsafe impl<T: Send> Send for ChannelInternal<T> {}
 
 impl<T> ChannelInternal<T> {
     /// Returns a channel internal with the required capacity
-    #[inline(always)]
     pub(crate) fn channel(bounded: bool, capacity: usize) -> (Internal<T>, Internal<T>) {
         let mut abstract_capacity = capacity;
         if !bounded {
@@ -116,6 +119,7 @@ impl<T> ChannelInternal<T> {
 
     /// Terminates remainings signals in the queue to notify listeners about the
     /// closing of the channel
+    #[inline(always)]
     pub(crate) fn terminate_signals(&mut self) {
         for t in self.wait_list.iter() {
             // Safety: it's safe to terminate owned signal once
@@ -168,6 +172,7 @@ impl<T> ChannelInternal<T> {
 
     /// Tries to remove the send signal from the waitlist, returns true if the
     /// operation was successful
+    #[inline(always)]
     pub(crate) fn cancel_send_signal(&mut self, sig: &Signal<T>) -> bool {
         if !self.recv_blocking {
             for (i, send) in self.wait_list.iter().enumerate() {
@@ -182,6 +187,7 @@ impl<T> ChannelInternal<T> {
 
     /// Tries to remove the received signal from the waitlist, returns true if
     /// the operation was successful
+    #[inline(always)]
     pub(crate) fn cancel_recv_signal(&mut self, sig: &Signal<T>) -> bool {
         if self.recv_blocking {
             for (i, recv) in self.wait_list.iter().enumerate() {
@@ -196,6 +202,7 @@ impl<T> ChannelInternal<T> {
 
     /// checks if send signal exists in wait list
     #[cfg(feature = "async")]
+    #[inline(always)]
     pub(crate) fn send_signal_exists(&self, sig: &Signal<T>) -> bool {
         if !self.recv_blocking {
             for signal in self.wait_list.iter() {
@@ -209,6 +216,7 @@ impl<T> ChannelInternal<T> {
 
     /// checks if receive signal exists in wait list
     #[cfg(feature = "async")]
+    #[inline(always)]
     pub(crate) fn recv_signal_exists(&self, sig: &Signal<T>) -> bool {
         if self.recv_blocking {
             for signal in self.wait_list.iter() {
@@ -220,6 +228,7 @@ impl<T> ChannelInternal<T> {
         false
     }
 
+    #[inline(always)]
     pub(crate) fn drop_send(&mut self) {
         if self.send_count > 0 {
             self.send_count -= 1;
@@ -229,6 +238,7 @@ impl<T> ChannelInternal<T> {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn drop_recv(&mut self) {
         if self.recv_count > 0 {
             self.recv_count -= 1;
@@ -238,12 +248,14 @@ impl<T> ChannelInternal<T> {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn add_send(&mut self) {
         if self.send_count > 0 {
             self.send_count += 1;
         }
     }
 
+    #[inline(always)]
     pub(crate) fn add_recv(&mut self) {
         if self.recv_count > 0 {
             self.recv_count += 1;

@@ -229,25 +229,7 @@ pub struct ReceiveFuture<'a, T> {
 
 impl<T> Drop for ReceiveFuture<'_, T> {
     fn drop(&mut self) {
-        if self.state.is_waiting() {
-            // try to cancel recv signal
-            if !self
-                .internal
-                .acquire_internal()
-                .cancel_recv_signal(&self.sig)
-            {
-                // a sender got signal ownership, receiver should wait until the response
-                if self.sig.async_blocking_wait() {
-                    // got ownership of data that is not going to be used ever again, so drop it
-                    if needs_drop::<T>() {
-                        // Safety: data is not moved it's safe to drop it
-                        unsafe {
-                            self.drop_local_data();
-                        }
-                    }
-                }
-            }
-        }
+        self._take();
     }
 }
 
@@ -294,6 +276,10 @@ impl<'a, T> ReceiveFuture<'a, T> {
     /// cancelled, this should be called to make sure data is not lost, if you care about not
     /// losing data.
     pub fn take(mut self) -> Option<T> {
+        self._take()
+    }
+
+    fn _take(&mut self) -> Option<T> {
         if self.state.is_waiting() {
             // try to cancel recv signal
             if !self
